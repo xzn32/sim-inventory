@@ -10,11 +10,21 @@ import urllib.error
 import subprocess
 import sys
 import threading
+import shutil
+import tempfile
 
 VERSION = "1.0.0"
 GITHUB_USER = "xzn32"
 GITHUB_REPO = "sim-inventory"
-VERSION_URL  = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/version.json"
+VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/version.json"
+
+def is_exe():
+    return getattr(sys, 'frozen', False)
+
+def get_exe_path():
+    if is_exe():
+        return sys.executable
+    return __file__
 
 def check_for_updates(silent=False):
     def _check():
@@ -63,6 +73,7 @@ def check_for_updates(silent=False):
 
     threading.Thread(target=_check, daemon=True).start()
 
+
 def download_and_install(download_url, new_version):
     try:
         status_label.config(text=f"Downloading v{new_version}...")
@@ -72,40 +83,58 @@ def download_and_install(download_url, new_version):
             download_url,
             headers={"User-Agent": "SIM-Inventory-App"}
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            new_code = resp.read().decode("utf-8")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            new_data = resp.read()
 
-        if not new_code.strip():
+        if not new_data:
             messagebox.showerror("Update Failed", "Downloaded file is empty. Aborting.")
+            status_label.config(text="Ready")
             return
 
-        import shutil
+        current_path = get_exe_path()
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_backup = __file__ + f".backup_{ts}"
-        shutil.copy2(__file__, script_backup)
 
-        with open(__file__, "w", encoding="utf-8") as f:
-            f.write(new_code)
+        if is_exe():
+            backup_path = current_path + f".backup_{ts}"
+            shutil.copy2(current_path, backup_path)
 
-        messagebox.showinfo(
-            "Update Complete",
-            f"Updated to v{new_version} successfully!\n"
-            "The app will now restart."
-        )
-        restart_app()
+            tmp_dir = tempfile.gettempdir()
+            new_exe_path = os.path.join(tmp_dir, "sim_manager_new.exe")
+            with open(new_exe_path, "wb") as f:
+                f.write(new_data)
+
+            bat_path = os.path.join(tmp_dir, "sim_update.bat")
+            with open(bat_path, "w") as bat:
+                bat.write(f"""@echo off
+timeout /t 2 /nobreak >nul
+move /y "{new_exe_path}" "{current_path}"
+start "" "{current_path}"
+del "%~f0"
+""")
+            save_data()
+            subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
+            root.quit()
+            root.destroy()
+            sys.exit(0)
+
+        else:
+            backup_path = current_path + f".backup_{ts}"
+            shutil.copy2(current_path, backup_path)
+            with open(current_path, "wb") as f:
+                f.write(new_data)
+            messagebox.showinfo("Update Complete", f"Updated to v{new_version}!\nThe app will now restart.")
+            save_data()
+            subprocess.Popen([sys.executable, current_path])
+            root.quit()
+            root.destroy()
+            sys.exit(0)
 
     except Exception as e:
         messagebox.showerror("Update Failed", f"Could not install update:\n{str(e)}")
         status_label.config(text="Update failed")
 
-def restart_app():
-    save_data()
-    subprocess.Popen([sys.executable, __file__])
-    root.quit()
-    root.destroy()
-    sys.exit(0)
 
-FILE = os.path.join(os.path.dirname(__file__), "sim_inventory.json")
+FILE = os.path.join(os.path.dirname(get_exe_path()), "sim_inventory.json")
 
 def load_data():
     if not os.path.exists(FILE):
@@ -137,8 +166,8 @@ def save_data():
     with open(FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-data  = load_data()
-sims  = data["sims"]
+data     = load_data()
+sims     = data["sims"]
 existing = {sim["iccid"] for sim in sims}
 
 def detect_type(iccid, sim_class):
@@ -175,8 +204,8 @@ def add_to_history(sim):
     history_tree.insert("", "end", values=(
         sim["id"], sim["iccid"], sim["type"], sim["carrier"], sim["status"],
         sim["phone_number"] or "",
-        sim["date_added"].replace("T"," "),
-        sim["date_sold"].replace("T"," ") if sim["date_sold"] else ""
+        sim["date_added"].replace("T", " "),
+        sim["date_sold"].replace("T", " ") if sim["date_sold"] else ""
     ))
 
 def refresh_history():
@@ -243,23 +272,18 @@ def edit_sim():
     sim = next((s for s in sims if s["id"] == sim_id), None)
     if not sim:
         return
-
     edit_win = tk.Toplevel(root)
     edit_win.title("Edit SIM")
     edit_win.geometry("300x250")
-
     tk.Label(edit_win, text="ICCID:").grid(row=0, column=0, padx=5, pady=5)
     iccid_var = tk.StringVar(value=sim["iccid"])
     tk.Entry(edit_win, textvariable=iccid_var).grid(row=0, column=1, padx=5, pady=5)
-
     tk.Label(edit_win, text="Type:").grid(row=1, column=0, padx=5, pady=5)
     type_var_edit = tk.StringVar(value=sim["type"].split()[0] if " " in sim["type"] else sim["type"])
     tk.Entry(edit_win, textvariable=type_var_edit).grid(row=1, column=1, padx=5, pady=5)
-
     tk.Label(edit_win, text="Carrier:").grid(row=2, column=0, padx=5, pady=5)
     carrier_var_edit = tk.StringVar(value=sim["carrier"])
     tk.Entry(edit_win, textvariable=carrier_var_edit).grid(row=2, column=1, padx=5, pady=5)
-
     tk.Label(edit_win, text="Status:").grid(row=3, column=0, padx=5, pady=5)
     status_var_edit = tk.StringVar(value=sim["status"])
     tk.Entry(edit_win, textvariable=status_var_edit).grid(row=3, column=1, padx=5, pady=5)
@@ -339,7 +363,7 @@ def reset_history():
     if messagebox.askyesno("Confirm Reset", "Are you sure you want to delete ALL SIM history?"):
         sims.clear()
         existing.clear()
-        data["total_sold_ever"]   = 0
+        data["total_sold_ever"]    = 0
         data["total_damaged_ever"] = 0
         save_data()
         refresh_history()
@@ -366,10 +390,10 @@ def export_unsold():
             ws.append([
                 sim["id"], sim["iccid"], sim["type"], sim["carrier"], sim["status"],
                 sim["phone_number"] or "",
-                sim["date_added"].replace("T"," "),
-                sim["date_sold"].replace("T"," ") if sim["date_sold"] else ""
+                sim["date_added"].replace("T", " "),
+                sim["date_sold"].replace("T", " ") if sim["date_sold"] else ""
             ])
-    save_path = os.path.join(os.path.dirname(__file__), "unsold_sims.xlsx")
+    save_path = os.path.join(os.path.dirname(get_exe_path()), "unsold_sims.xlsx")
     wb.save(save_path)
     messagebox.showinfo("Export Complete", f"Unsold SIMs exported to:\n{save_path}")
 
@@ -410,9 +434,8 @@ def import_from_excel():
         messagebox.showerror("Import Error", f"Error importing file:\n{str(e)}")
 
 def backup_data():
-    import shutil
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = os.path.join(os.path.dirname(__file__), f"sim_inventory_backup_{ts}.json")
+    backup_file = os.path.join(os.path.dirname(get_exe_path()), f"sim_inventory_backup_{ts}.json")
     shutil.copy(FILE, backup_file)
     messagebox.showinfo("Backup Complete", f"Backup saved as:\n{backup_file}")
 
@@ -483,27 +506,23 @@ ttk.Button(frame_top, text="About",
 
 input_frame = tk.Frame(root, bg="#ffffff", padx=20, pady=10)
 input_frame.pack(fill="x")
-
 tk.Label(input_frame, text="ICCID:", font=("Arial", 12), bg="#ffffff").grid(row=0, column=0, padx=10, pady=5, sticky="e")
 iccid_entry = tk.Entry(input_frame, font=("Arial", 12), bg="#ffffff", fg="#212529",
                         insertbackground="#007bff", width=25)
 iccid_entry.grid(row=0, column=1, padx=10, pady=5)
 iccid_entry.focus()
-ttk.Button(input_frame, text="Add SIM", command=add_sim, style="Primary.TButton").grid(row=0, column=2, padx=5)
+ttk.Button(input_frame, text="Add SIM",  command=add_sim,  style="Primary.TButton").grid(row=0, column=2, padx=5)
 ttk.Button(input_frame, text="Bulk Add", command=bulk_add, style="Primary.TButton").grid(row=0, column=3, padx=5)
-
 tk.Label(input_frame, text="Type:", font=("Arial", 12), bg="#ffffff").grid(row=0, column=4, padx=10, sticky="e")
 type_var = tk.StringVar()
 ttk.Combobox(input_frame, textvariable=type_var, values=["U","E"],
              state="readonly", font=("Arial", 12), width=5).grid(row=0, column=5, padx=5)
 type_var.set("U")
-
 tk.Label(input_frame, text="Carrier:", font=("Arial", 12), bg="#ffffff").grid(row=0, column=6, padx=10, sticky="e")
 carrier_entry = tk.Entry(input_frame, font=("Arial", 12), bg="#ffffff", fg="#212529",
                           insertbackground="#007bff", width=15)
 carrier_entry.grid(row=0, column=7, padx=5)
 carrier_entry.insert(0, "Korek")
-
 iccid_entry.bind("<Return>", lambda e: add_sim())
 
 search_frame = tk.Frame(root, bg="#ffffff", padx=20, pady=5)
@@ -671,15 +690,15 @@ def quick_assign_phone():
         save_data(); refresh_history(); update_counts()
 
 popup_menu = tk.Menu(root, tearoff=0)
-popup_menu.add_command(label="Copy ICCID",           command=copy_iccid)
-popup_menu.add_command(label="Copy Row",             command=copy_row)
+popup_menu.add_command(label="Copy ICCID",          command=copy_iccid)
+popup_menu.add_command(label="Copy Row",            command=copy_row)
 popup_menu.add_separator()
-popup_menu.add_command(label="Quick Edit",           command=edit_sim)
-popup_menu.add_command(label="Mark as Sold",         command=quick_sell)
-popup_menu.add_command(label="Mark as Damaged",      command=quick_damage)
-popup_menu.add_command(label="Assign Phone Number",  command=quick_assign_phone)
+popup_menu.add_command(label="Quick Edit",          command=edit_sim)
+popup_menu.add_command(label="Mark as Sold",        command=quick_sell)
+popup_menu.add_command(label="Mark as Damaged",     command=quick_damage)
+popup_menu.add_command(label="Assign Phone Number", command=quick_assign_phone)
 popup_menu.add_separator()
-popup_menu.add_command(label="Delete Selected",      command=delete_sim)
+popup_menu.add_command(label="Delete Selected",     command=delete_sim)
 
 history_tree.bind("<Button-3>", lambda e: popup_menu.post(e.x_root, e.y_root))
 history_tree.bind("<Control-c>", lambda e: copy_row())
@@ -691,15 +710,15 @@ root.bind("<Delete>",    lambda e: delete_sim())
 button_frame = tk.Frame(root, bg="#ffffff", padx=20, pady=10)
 button_frame.pack(fill="x")
 for i, (text, cmd, btn_style) in enumerate([
-    ("Edit Selected",        edit_sim,          "Primary.TButton"),
-    ("Mark Sold",            sell_sim,          "Primary.TButton"),
-    ("Mark Damaged",         damage_sim,        "Primary.TButton"),
-    ("Delete Selected",      delete_sim,        "Primary.TButton"),
-    ("Backup Data",          backup_data,       "Secondary.TButton"),
-    ("Summary",              show_summary,      "Secondary.TButton"),
-    ("Reset All",            reset_history,     "Secondary.TButton"),
-    ("Import from Excel",    import_from_excel, "Secondary.TButton"),
-    ("Export Unsold",        export_unsold,     "Secondary.TButton"),
+    ("Edit Selected",     edit_sim,          "Primary.TButton"),
+    ("Mark Sold",         sell_sim,          "Primary.TButton"),
+    ("Mark Damaged",      damage_sim,        "Primary.TButton"),
+    ("Delete Selected",   delete_sim,        "Primary.TButton"),
+    ("Backup Data",       backup_data,       "Secondary.TButton"),
+    ("Summary",           show_summary,      "Secondary.TButton"),
+    ("Reset All",         reset_history,     "Secondary.TButton"),
+    ("Import from Excel", import_from_excel, "Secondary.TButton"),
+    ("Export Unsold",     export_unsold,     "Secondary.TButton"),
 ]):
     ttk.Button(button_frame, text=text, command=cmd, style=btn_style).grid(row=0, column=i, padx=5, pady=5)
 
@@ -729,11 +748,9 @@ Inline Editing:
 """.strip())
 
 ttk.Button(status_frame, text="?", width=3,
-           command=show_shortcuts, style="Secondary.TButton").pack(side="right", padx=(0,10))
+           command=show_shortcuts, style="Secondary.TButton").pack(side="right", padx=(0, 10))
 
 refresh_history()
 update_counts()
-
 root.after(3000, lambda: check_for_updates(silent=True))
-
 root.mainloop()
