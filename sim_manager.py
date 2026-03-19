@@ -13,7 +13,7 @@ import threading
 import shutil
 import tempfile
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 GITHUB_USER = "xzn32"
 GITHUB_REPO = "sim-inventory"
 VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/version.json"
@@ -81,13 +81,17 @@ def download_and_install(download_url, new_version):
 
         req = urllib.request.Request(
             download_url,
-            headers={"User-Agent": "SIM-Inventory-App"}
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Accept": "application/octet-stream",
+            }
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
+        with opener.open(req, timeout=60) as resp:
             new_data = resp.read()
 
-        if not new_data:
-            messagebox.showerror("Update Failed", "Downloaded file is empty. Aborting.")
+        if not new_data or len(new_data) < 1000:
+            messagebox.showerror("Update Failed", "Downloaded file is empty or too small. Aborting.")
             status_label.config(text="Ready")
             return
 
@@ -122,12 +126,12 @@ del "%~f0"
             shutil.copy2(current_path, backup_path)
             with open(current_path, "wb") as f:
                 f.write(new_data)
-            messagebox.showinfo("Update Complete", f"Updated to v{new_version}!\nThe app will now restart.")
-            save_data()
-            subprocess.Popen([sys.executable, current_path])
-            root.quit()
-            root.destroy()
-            sys.exit(0)
+            root.after(0, lambda: (
+                messagebox.showinfo("Update Complete", f"Updated to v{new_version}!\nThe app will now restart."),
+                save_data(),
+                subprocess.Popen([sys.executable, current_path]),
+                root.quit()
+            ))
 
     except Exception as e:
         messagebox.showerror("Update Failed", f"Could not install update:\n{str(e)}")
@@ -544,8 +548,28 @@ for i, key in enumerate(["U Kurdistan","U Baghdad","E Kurdistan","E Baghdad",
     lbl.grid(row=0, column=i, padx=8)
     count_labels[key] = lbl
 
-table_frame = tk.Frame(root, bg="#ffffff", padx=20, pady=10)
-table_frame.pack(fill="both", expand=True)
+main_frame = tk.Frame(root, bg="#ffffff")
+main_frame.pack(fill="both", expand=True)
+
+button_side_frame = tk.Frame(main_frame, bg="#f0f0f0", padx=8, pady=10)
+button_side_frame.pack(side="left", fill="y")
+
+side_buttons = [
+    ("Edit Selected",     edit_sim,          "Primary.TButton"),
+    ("Mark Sold",         sell_sim,          "Primary.TButton"),
+    ("Mark Damaged",      damage_sim,        "Primary.TButton"),
+    ("Delete Selected",   delete_sim,        "Primary.TButton"),
+    ("Backup Data",       backup_data,       "Secondary.TButton"),
+    ("Summary",           show_summary,      "Secondary.TButton"),
+    ("Reset All",         reset_history,     "Secondary.TButton"),
+    ("Import Excel",      import_from_excel, "Secondary.TButton"),
+    ("Export Unsold",     export_unsold,     "Secondary.TButton"),
+]
+for text, cmd, btn_style in side_buttons:
+    ttk.Button(button_side_frame, text=text, command=cmd, style=btn_style, width=14).pack(pady=4)
+
+table_frame = tk.Frame(main_frame, bg="#ffffff", padx=10, pady=10)
+table_frame.pack(side="left", fill="both", expand=True)
 columns = ("ID","ICCID","Type","Carrier","Status","Phone","Date Added","Date Sold")
 history_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=20)
 for col in columns:
@@ -707,20 +731,7 @@ root.bind("<Control-d>", lambda e: quick_damage())
 root.bind("<Control-e>", lambda e: edit_sim())
 root.bind("<Delete>",    lambda e: delete_sim())
 
-button_frame = tk.Frame(root, bg="#ffffff", padx=20, pady=10)
-button_frame.pack(fill="x")
-for i, (text, cmd, btn_style) in enumerate([
-    ("Edit Selected",     edit_sim,          "Primary.TButton"),
-    ("Mark Sold",         sell_sim,          "Primary.TButton"),
-    ("Mark Damaged",      damage_sim,        "Primary.TButton"),
-    ("Delete Selected",   delete_sim,        "Primary.TButton"),
-    ("Backup Data",       backup_data,       "Secondary.TButton"),
-    ("Summary",           show_summary,      "Secondary.TButton"),
-    ("Reset All",         reset_history,     "Secondary.TButton"),
-    ("Import from Excel", import_from_excel, "Secondary.TButton"),
-    ("Export Unsold",     export_unsold,     "Secondary.TButton"),
-]):
-    ttk.Button(button_frame, text=text, command=cmd, style=btn_style).grid(row=0, column=i, padx=5, pady=5)
+
 
 status_frame = tk.Frame(root, bg="#f8f9fa", padx=20, pady=5)
 status_frame.pack(fill="x")
